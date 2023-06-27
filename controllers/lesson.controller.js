@@ -2,6 +2,7 @@ const db = require('../db.js');
 
 class LessonController {
 
+    
     async getLessons(req, res) {
         try {
             const date = req.query.date;
@@ -54,7 +55,7 @@ class LessonController {
             if (lessons.rowCount) {
                 res.send(lessons.rows)
             } else {
-                res.status(400).send('Не найдено занятий с выбранными критериями')
+                res.status(400).json({message: 'Не найдено занятий с выбранными критериями'});
             }
         } catch (error) {
             res.status(500).json(error);
@@ -62,7 +63,69 @@ class LessonController {
     }
 
     async createLessons(req, res) {
+        try {
+            const teacherIds = req.body.teacherIds;
+            const title = req.body.title;
+            const days = req.body.days;
+            const firstDate = req.body.firstDate;
+            const lastDate = req.body.lastDate;
+            let lessonsCount = req.body.lessonsCount;
 
+            let weekNum = 0;
+            let insertLessonsValue = [];
+            let insertLessonTeachersValue = [];
+            let insertLessonTeachersRequest = `INSERT INTO lesson_teachers (lesson_id, teacher_id) VALUES`
+            let insertLessonsRequest = `INSERT INTO lessons (date, title, status) VALUES`;
+
+            const dayOfWeekReq = await db.query(`SELECT extract(dow from date '${firstDate}')`);
+            const extractDayOfWeek = dayOfWeekReq.rows[0].extract;
+            const dateWeekBeginningReq = await db.query(`SELECT (DATE '${firstDate}' - ${extractDayOfWeek})::timestamp at time zone 'UTC' AT TIME ZONE 'Europe/Samara' as date`);
+            const dateWeekBeginningDate = dateWeekBeginningReq.rows[0].date;
+            let stop = false;
+
+            while (!stop) {
+                days.forEach(day => {
+                    let newDate = addDays(dateWeekBeginningDate, day + weekNum*7);
+                    if (!weekNum && day < extractDayOfWeek) {
+                        return;
+                    }
+                    if (lessonsCount == 0 || (lastDate && newDate.getTime() > new Date(lastDate).getTime())) {
+                        stop = true;
+                        return;
+                    }
+                    insertLessonsValue.push(` (DATE '${newDate.toISOString()}', '${title}', 0)`);
+                    lessonsCount -= 1;
+                    console.log(lessonsCount);
+            });
+                weekNum += 1;
+            }
+
+            console.log(insertLessonsValue);
+            insertLessonsRequest += insertLessonsValue.join(',') + 'RETURNING id';
+            console.log(insertLessonsRequest);
+            const lessonIds = await db.query(insertLessonsRequest)
+            console.log(lessonIds.rows);
+            
+            lessonIds.rows.forEach(lesson => {
+                teacherIds.forEach(teacherId => {
+                    insertLessonTeachersValue.push(` (${lesson.id}, ${teacherId})`);
+                });
+            });
+            
+            console.log(insertLessonTeachersValue);
+            insertLessonTeachersRequest += insertLessonTeachersValue.join(',');
+            await db.query(insertLessonTeachersRequest);
+            
+            res.send(lessonIds.rows);
+        } catch (error) {
+            res.status(400).json(error);
+        }
+
+        function addDays(date, days) {
+            let result = new Date(date);
+            result.setDate(result.getDate() + days);
+            return result;
+        }
     }
 }
 
