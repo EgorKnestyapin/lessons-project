@@ -2,7 +2,12 @@ const db = require('../db.js');
 
 class LessonController {
 
-    
+    /**
+     * Получение занятий
+     * 
+     * @param {*} req запрос
+     * @param {*} res ответ
+     */
     async getLessons(req, res) {
         try {
             const date = req.query.date;
@@ -11,6 +16,8 @@ class LessonController {
             const studentsCount = req.query.studentsCount;
             let page = req.query.page || 0;
             let lessonsPerPage = req.query.lessonsPerPage || 5;
+
+            // Из-за того, что при создании таблицы lessons был неправильно указан тип колонки даты(нужно без timezone), приходится подгонять дату под правильный регион
             let request = `SELECT lessons.id, (date::timestamp at time zone 'UTC' AT TIME ZONE 'Europe/Moscow') as date, title, status, count(distinct students.id) as visitCount,
             COALESCE (json_agg(distinct jsonb_build_object('id',students.id, 'name',students.name, 'visit',true)) filter(where students.id is not null), '[]'::json) as students, 
             COALESCE (json_agg(distinct jsonb_build_object('id',teachers.id, 'name',teachers.name)) filter(where teachers.id is not null), '[]'::json) as teachers 
@@ -62,14 +69,22 @@ class LessonController {
         }
     }
 
+    /**
+     * Создание занятий
+     * 
+     * @param {*} req запрос
+     * @param {*} res ответ
+     */
     async createLessons(req, res) {
         try {
             const teacherIds = req.body.teacherIds;
             const title = req.body.title;
             const days = req.body.days;
             const firstDate = req.body.firstDate;
-            const lastDate = req.body.lastDate;
+            let lastDate = req.body.lastDate;
             let lessonsCount = req.body.lessonsCount;
+            let leapYear = new Date(firstDate).getFullYear() % 4 == 0 ? true : false;
+            let daysInYear = leapYear? 366 : 365;
 
             let weekNum = 0;
             let insertLessonsValue = [];
@@ -79,7 +94,9 @@ class LessonController {
 
             const dayOfWeekReq = await db.query(`SELECT extract(dow from date '${firstDate}')`);
             const extractDayOfWeek = dayOfWeekReq.rows[0].extract;
-            const dateWeekBeginningReq = await db.query(`SELECT (DATE '${firstDate}' - ${extractDayOfWeek})::timestamp at time zone 'UTC' AT TIME ZONE 'Europe/Samara' as date`);
+
+            // Из-за того, что при создании таблицы lessons был неправильно указан тип колонки даты(нужно без timezone), приходится подгонять дату под правильный регион
+            const dateWeekBeginningReq = await db.query(`SELECT (DATE '${firstDate}' - ${extractDayOfWeek})::timestamp at time zone 'UTC' AT TIME ZONE 'Europe/Moscow' as date`);
             const dateWeekBeginningDate = dateWeekBeginningReq.rows[0].date;
             let stop = false;
 
@@ -89,13 +106,13 @@ class LessonController {
                     if (!weekNum && day < extractDayOfWeek) {
                         return;
                     }
-                    if (lessonsCount == 0 || (lastDate && newDate.getTime() > new Date(lastDate).getTime())) {
+                    if (lessonsCount == 0 || insertLessonsValue.length == 300 || (lastDate && newDate.getTime() > new Date(lastDate).getTime()) ||
+                    (newDate.getTime() > addDays(firstDate, daysInYear).getTime())) {
                         stop = true;
                         return;
                     }
                     insertLessonsValue.push(` (DATE '${newDate.toISOString()}', '${title}', 0)`);
                     lessonsCount -= 1;
-                    console.log(lessonsCount);
             });
                 weekNum += 1;
             }
